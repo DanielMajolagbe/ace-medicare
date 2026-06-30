@@ -58934,7 +58934,8 @@ var createInsertSchema = (entity, refine2) => {
 // ../../lib/db/src/schema/users.ts
 var usersTable = pgTable("users", {
   id: serial("id").primaryKey(),
-  email: text("email").notNull().unique(),
+  username: text("username").unique(),
+  email: text("email").unique(),
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("patient"),
   firstName: text("first_name").notNull(),
@@ -59078,6 +59079,7 @@ function hashPassword(password) {
 function safeUser(user) {
   return {
     id: user.id,
+    username: user.username,
     email: user.email,
     role: user.role,
     firstName: user.firstName,
@@ -59087,15 +59089,15 @@ function safeUser(user) {
   };
 }
 router2.post("/login", async (req, res) => {
-  const { email: email3, password } = req.body;
-  if (!email3 || !password) {
-    res.status(400).json({ error: "Email and password required" });
+  const { username, password } = req.body;
+  if (!username || !password) {
+    res.status(400).json({ error: "Username and password required" });
     return;
   }
-  const users = await db.select().from(usersTable).where(eq(usersTable.email, email3.toLowerCase()));
+  const users = await db.select().from(usersTable).where(eq(usersTable.username, username));
   const user = users[0];
   if (!user || user.passwordHash !== hashPassword(password)) {
-    res.status(401).json({ error: "Invalid email or password" });
+    res.status(401).json({ error: "Invalid username or password" });
     return;
   }
   req.session.userId = user.id;
