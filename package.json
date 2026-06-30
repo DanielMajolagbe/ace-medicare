@@ -1,0 +1,13 @@
+{
+  "name": "ace-medicare",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.13.3",
+    "connect-pg-simple": "^10.0.0",
+    "express-session": "^1.18.1"
+  }
+}
