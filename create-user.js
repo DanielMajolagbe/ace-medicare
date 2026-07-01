@@ -61,20 +61,38 @@ async function createUser() {
         await pool.query(`ALTER TABLE users ADD COLUMN username TEXT UNIQUE;`);
         console.log('Added username column to users table');
       }
+
+      // Check if email column exists
+      console.log('Checking if email column exists...');
+      const checkEmailColumn = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = 'email'
+        );
+      `);
+      console.log('Email column exists:', checkEmailColumn.rows[0].exists);
+      
+      if (!checkEmailColumn.rows[0].exists) {
+        // Add email column if it doesn't exist
+        console.log('Adding email column...');
+        await pool.query(`ALTER TABLE users ADD COLUMN email TEXT UNIQUE;`);
+        console.log('Added email column to users table');
+      }
     }
     
     // Insert or update the user
-    const username = 'Daniel';
-    const password = '3776+dgf7ue';
+    const username = 'admin';
+    const email = 'admin@acemedicare.nhs.uk';
+    const password = 'password123';
     const passwordHash = hashPassword(password);
     console.log('Upserting user...');
     
     const result = await pool.query(`
-      INSERT INTO users (username, password_hash, role, first_name, last_name)
-      VALUES ($1, $2, 'admin', 'Daniel', 'Admin')
-      ON CONFLICT (username) DO UPDATE SET password_hash = $2
+      INSERT INTO users (username, email, password_hash, role, first_name, last_name)
+      VALUES ($1, $2, $3, 'admin', 'Admin', 'User')
+      ON CONFLICT (username) DO UPDATE SET password_hash = $3, email = $2
       RETURNING *;
-    `, [username, passwordHash]);
+    `, [username, email, passwordHash]);
     
     console.log('User created/updated successfully:', result.rows[0]);
   } catch (err) {

@@ -59089,12 +59089,17 @@ function safeUser(user) {
   };
 }
 router2.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    res.status(400).json({ error: "Username and password required" });
+  const { username, email, password } = req.body;
+  const identifier = username || email;
+  if (!identifier || !password) {
+    res.status(400).json({ error: "Username/email and password required" });
     return;
   }
-  const users = await db.select().from(usersTable).where(eq(usersTable.username, username));
+  const users = await db.select().from(usersTable).where(
+    username 
+      ? eq(usersTable.username, username) 
+      : eq(usersTable.email, email)
+  );
   const user = users[0];
   if (!user || user.passwordHash !== hashPassword(password)) {
     res.status(401).json({ error: "Invalid username or password" });
