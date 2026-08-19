@@ -59088,30 +59088,149 @@ function safeUser(user) {
     patientId: user.patientId ?? null
   };
 }
+var DEMO_USER = {
+  username: "admin",
+  email: "admin@acemedicare.nhs.uk",
+  password: "password123",
+  role: "admin",
+  firstName: "Admin",
+  lastName: "User"
+};
+var authBootstrapPromise;
+async function ensureAuthBootstrap() {
+  if (!authBootstrapPromise) {
+    authBootstrapPromise = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username TEXT UNIQUE,
+          email TEXT UNIQUE,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL DEFAULT 'patient',
+          first_name TEXT NOT NULL,
+          last_name TEXT NOT NULL,
+          staff_id INTEGER,
+          patient_id INTEGER,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+      `);
+      await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS username TEXT,
+        ADD COLUMN IF NOT EXISTS email TEXT,
+        ADD COLUMN IF NOT EXISTS password_hash TEXT,
+        ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'patient',
+        ADD COLUMN IF NOT EXISTS first_name TEXT DEFAULT 'User',
+        ADD COLUMN IF NOT EXISTS last_name TEXT DEFAULT 'Account',
+        ADD COLUMN IF NOT EXISTS staff_id INTEGER,
+        ADD COLUMN IF NOT EXISTS patient_id INTEGER,
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+      `);
+      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users (username);`);
+      await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users (email);`);
+      await pool.query(
+        `
+          INSERT INTO users (username, email, password_hash, role, first_name, last_name)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (username)
+          DO UPDATE SET
+            email = EXCLUDED.email,
+            password_hash = EXCLUDED.password_hash,
+            role = EXCLUDED.role,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name;
+        `,
+        [
+          DEMO_USER.username,
+          DEMO_USER.email,
+          hashPassword(DEMO_USER.password),
+          DEMO_USER.role,
+          DEMO_USER.firstName,
+          DEMO_USER.lastName
+        ]
+      );
+    })().catch((error) => {
+      authBootstrapPromise = null;
+      throw error;
+    });
+  }
+  return authBootstrapPromise;
+}
 router2.post("/login", async (req, res) => {
+  await ensureAuthBootstrap();
   const { username, email, password } = req.body;
-  const identifier = username || email;
+  const identifier = (username || email || "").trim();
   if (!identifier || !password) {
     res.status(400).json({ error: "Username/email and password required" });
     return;
   }
   const users = await db.select().from(usersTable).where(
-    username 
-      ? eq(usersTable.username, username) 
-      : eq(usersTable.email, email)
-  );
+    or(eq(usersTable.username, identifier), ilike(usersTable.email, identifier))
+  ).limit(1);
   const user = users[0];
   if (!user || user.passwordHash !== hashPassword(password)) {
     res.status(401).json({ error: "Invalid username or password" });
     return;
   }
-  req.session.userId = user.id;
-  res.json({ user: safeUser(user) });
+  req.session.regenerate((regenerateError) => {
+    if (regenerateError) {
+      res.status(500).json({ error: "Unable to start session" });
+      return;
+    }
+    req.session.userId = user.id;
+    req.session.save((saveError) => {
+      if (saveError) {
+        res.status(500).json({ error: "Unable to save session" });
+        return;
+      }
+      res.json({ user: safeUser(user) });
+    });
+  });
+});
+router2.post("/signup", async (req, res) => {
+  await ensureAuthBootstrap();
+  const { username, email, password, firstName, lastName } = req.body;
+  const normalizedEmail = typeof email === "string" && email.trim() ? email.trim().toLowerCase() : null;
+  const normalizedUsername = typeof username === "string" && username.trim() ? username.trim() : normalizedEmail ? normalizedEmail.split("@")[0] : null;
+  if (!normalizedUsername || !password) {
+    res.status(400).json({ error: "Username or email and password required" });
+    return;
+  }
+  const existingUsers = await db.select().from(usersTable).where(
+    normalizedEmail ? or(eq(usersTable.username, normalizedUsername), ilike(usersTable.email, normalizedEmail)) : eq(usersTable.username, normalizedUsername)
+  ).limit(1);
+  if (existingUsers[0]) {
+    res.status(409).json({ error: "An account with that username or email already exists" });
+    return;
+  }
+  const [user] = await db.insert(usersTable).values({
+    username: normalizedUsername,
+    email: normalizedEmail,
+    passwordHash: hashPassword(password),
+    role: "patient",
+    firstName: typeof firstName === "string" && firstName.trim() ? firstName.trim() : "New",
+    lastName: typeof lastName === "string" && lastName.trim() ? lastName.trim() : "User"
+  }).returning();
+  req.session.regenerate((regenerateError) => {
+    if (regenerateError) {
+      res.status(500).json({ error: "Unable to start session" });
+      return;
+    }
+    req.session.userId = user.id;
+    req.session.save((saveError) => {
+      if (saveError) {
+        res.status(500).json({ error: "Unable to save session" });
+        return;
+      }
+      res.status(201).json({ user: safeUser(user) });
+    });
+  });
 });
 router2.post("/logout", (req, res) => {
   req.session.destroy(() => {
+    res.clearCookie("connect.sid", { path: "/" });
+    res.json({ ok: true });
   });
-  res.json({ ok: true });
 });
 router2.get("/me", async (req, res) => {
   const userId = req.session?.userId;
@@ -59119,7 +59238,7 @@ router2.get("/me", async (req, res) => {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
-  const users = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  const users = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
   const user = users[0];
   if (!user) {
     res.status(401).json({ error: "User not found" });
@@ -60119,13 +60238,22 @@ app.use((0, import_cors.default)({
 }));
 app.use(import_express11.default.json());
 app.use(import_express11.default.urlencoded({ extended: true }));
+var PostgresSessionStore = require("connect-pg-simple")(import_express_session.default);
+app.set("trust proxy", 1);
 app.use(
   (0, import_express_session.default)({
+    store: new PostgresSessionStore({
+      pool,
+      tableName: "user_sessions",
+      createTableIfMissing: true
+    }),
     secret: process.env.SESSION_SECRET || "ace-medicare-dev-secret-2024",
     resave: false,
     saveUninitialized: false,
+    proxy: true,
     cookie: {
-      secure: false,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
       httpOnly: true,
       maxAge: 1e3 * 60 * 60 * 24 * 7
       // 7 days
