@@ -1,0 +1,13 @@
+var usersTable = pgTable("users", {
+  id: serial("id").primaryKey(),
+  username: text("username").unique(),
+  email: text("email").unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull().default("patient"),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  staffId: integer("staff_id"),
+  patientId: integer("patient_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+});
+var ins
